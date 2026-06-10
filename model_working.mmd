@@ -1,0 +1,72 @@
+%% Bag-file inference with the fine-tuned two-tower model (checkpoint = wnll06).
+%% How each ROS topic flows through the per-frame pipeline into the model and out.
+%% Render: paste into https://mermaid.live , VS Code "Markdown Preview Mermaid",
+%% or  mmdc -i bag_inference_pipeline.mmd -o bag_inference_pipeline.svg
+flowchart TD
+    %% ===================== source =====================
+    BAG[("ROS 2 bag<br/>converted_rosbags_0528 / *.db3 (sqlite3)")]
+
+    %% ===================== ROS topics =====================
+    subgraph TOPICS["ROS topics (the only inputs from the bag)"]
+        direction LR
+        T1["/camera/color/image_raw<br/>sensor_msgs/Image"]
+        T2["/mavros/imu/data<br/>sensor_msgs/Imu"]
+        T3["/mavros/local_position/pose<br/>geometry_msgs/PoseStamped"]
+        T4["/mavros/global_position/global<br/>sensor_msgs/NavSatFix"]
+    end
+
+    BAG --> T1
+    BAG --> T2
+    BAG --> T3
+    BAG --> T4
+
+    %% ===================== per-topic decode =====================
+    T1 --> D1["decode RGB 640x480"]
+    T2 --> D2["quaternion -> roll / pitch / yaw"]
+    T3 --> D3["z = altitude AGL<br/>(sets tile size)"]
+    T3 --> D4["x , y = ENU odometry<br/>(tracker only)"]
+    T4 --> D5["GPS lat / lon"]
+
+    %% ===================== per-frame processing =====================
+    subgraph FRAME["Per-frame processing (every interval_s = 5 s, alt > 5 m)"]
+        ORTHO["ORTHORECTIFY drone frame<br/>camera K + roll/pitch/alt, assume_nadir"]
+        QUERY["QUERY tile<br/>(drone footprint)"]
+        PRIOR["PRIOR (where we think the drone is)<br/>pos = GPS +/- perturb  |  seed-GPS + odometry (tracker)<br/>yaw = IMU heading"]
+        REF["sample REFERENCE tile from geotiff<br/>@ prior, 2.5x size, rotated to heading"]
+    end
+
+    D1 --> ORTHO
+    D2 --> ORTHO
+    D3 --> ORTHO
+    ORTHO --> QUERY
+
+    D2 --> PRIOR
+    D4 --> PRIOR
+    D5 --> PRIOR
+    PRIOR --> REF
+
+    %% ===================== fine-tuned model =====================
+    MODEL{{"FINE-TUNED TWO-TOWER MODEL<br/>shared DINOv3 ViT-S + LoRA  (ckpt = wnll06)<br/>model(QUERY, REF) -> offset_frac . dyaw_deg . logvar(sigma)"}}
+
+    QUERY --> MODEL
+    REF --> MODEL
+
+    %% ===================== decode + scoring =====================
+    DECODE["DECODE offset -> predicted lat / lon / yaw"]
+    MODEL --> DECODE
+    DECODE -.->|"tracker: carry forward as next prior"| PRIOR
+
+    CMP["COMPARE to GPS ground truth -> error"]
+    D5 --> CMP
+    DECODE --> CMP
+
+    OUT["OUTPUTS<br/>summary.json . per_frame.csv<br/>trajectory.png . error_cdf.png . map_overlay.png"]
+    CMP --> OUT
+
+    %% ===================== styling =====================
+    classDef topic fill:#e8f0fe,stroke:#4285f4,color:#000;
+    classDef model fill:#fce8e6,stroke:#ea4335,stroke-width:2px,color:#000;
+    classDef out   fill:#e6f4ea,stroke:#34a853,color:#000;
+    class T1,T2,T3,T4 topic;
+    class MODEL model;
+    class OUT out;
