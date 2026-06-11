@@ -1,0 +1,58 @@
+%% flying-blind — GNSS-denied UAV navigation
+%% Architecture + models. Render with any Mermaid tool (mermaid.live, VS Code Mermaid, etc.)
+flowchart TB
+    subgraph CLIENTS["Telemetry sources — both emit the SAME TelemetryFrame @ 10 Hz"]
+        SIM["simulator/ (browser)<br/>Three.js 3D scene<br/>synthetic nadir camera + IMU/mag/baro"]
+        ROS["ros2_bridge/ (planned, plan.md)<br/>rclpy node over recorded rosbag<br/>MAVROS + RealSense -> TelemetryFrame"]
+    end
+
+    subgraph BACKEND["backend/ — nav stack (FastAPI :8080, /nav/epoch)"]
+        ING["ingress/ — parse TelemetryFrame<br/>(ground_truth kept for metrics only)"]
+
+        subgraph LIGHT["@ 10 Hz (light, every epoch)"]
+            INS["ins/ — strapdown propagate<br/>(quat + GRAVITY_ENU)"]
+            HB["heading/ + velocity/ — mag/baro fuse, DR"]
+            STRIP["strip/ — flight-strip buffer (~20 frames)"]
+            SIL["SIL recording -> ml/data/raw/"]
+        end
+
+        subgraph HEAVY["~ every 1 s (heavy fix)"]
+            VPREP["vision/ — decode JPEG, undistort,<br/>GSD, north-up deskew (frame_prep)"]
+            DSMAC["dsmac/ — NCC pyramid matcher<br/>(strip vs ortho chip)"]
+            TERCOM["navigators/tercom — terrain profile match (stub)"]
+            NAVS["navigators/ — inertial · visual · tercom · velocity_mag"]
+            JUDGE["judges/ — frame-motion verdict"]
+            GATE["gating/ — confidence gating"]
+            FUSE["fusion/ — innovation filter"]
+            CHIEF["navigators/chief (Captain)<br/>-> NavigationSolution"]
+        end
+
+        ING --> LIGHT --> HEAVY --> RESP["NavEpochResponse<br/>(nav_updated, fused estimate)"]
+    end
+
+    subgraph WORKERS["ML inference workers (sidecar HTTP services)"]
+        W1["heading worker :8081<br/>XGBoost"]
+        W2["vel-alt worker :8082<br/>ResNet-18 + LSTM"]
+    end
+
+    subgraph ML["ml/ — offline training (nav_ml, standalone pkg)"]
+        T1["heading_mag_acc -> checkpoints/heading_mag_acc<br/>XGBoost: sin/cos(heading) from mag+accel"]
+        T2["vel_alt -> checkpoints/vel_alt<br/>ResNet-18 frame-wise + LSTM: speed+altitude"]
+        T3["tile_embed<br/>ResNet-18/34 (fc removed) -> L2 embedding<br/>coarse tile retrieval before DSMAC"]
+        T4["flair_seg: DeepLabV3 + ResNet-34 (FLAIR-INC, 19 cls)<br/>cityscapes_seg: DeepLabV3 + ResNet-50 (zero-shot)"]
+        T5["osm_match -> structural raster matching (classical)"]
+    end
+
+    subgraph RESEARCH["map_explorer/ — research GUI (NOT wired to backend)"]
+        MX["upload ortho -> FLAIR overlay<br/>+ structural match vs OSM mosaic (Krakow)"]
+    end
+
+    SIM -->|"@10 Hz"| ING
+    ROS -.->|planned| ING
+    RESP -->|"cyan ghost vs truth"| SIM
+    HB -. queries .-> W1
+    HEAVY -. queries .-> W2
+    SIL --> ML
+    ML -->|"checkpoints .pt/.json"| WORKERS
+    T4 --> RESEARCH
+    T5 --> RESEARCH
