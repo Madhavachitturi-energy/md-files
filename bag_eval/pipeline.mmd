@@ -1,0 +1,16 @@
+flowchart TD
+    A["run() — bag_eval.py:86"] --> B["Read config.yaml → data_out/meta.json<br/>→ DataConfig (bag, camera, ortho, maps, perturb)"]
+    B --> C["_load_model(ckpt) → TwoTowerModel.eval()<br/>phase4_eval.py:45"]
+    B --> D["MapRegistry(cfg) — open each geotiff,<br/>record EPSG:4326 bounds — maps.py:62"]
+    B --> E["load_pose_timeseries(cfg)<br/>one bag pass: GPS / IMU-quat / local-pose-z<br/>bag_pose.py:79"]
+    D --> F["map_date = most recent tif if not given"]
+    E --> G["enumerate_frames(): camera frame every<br/>interval_s, pose interpolated at t_ns<br/>bag_pose.py:128"]
+    G --> H{"alt_agl_m ><br/>min_alt_agl_m?"}
+    H -- no --> G
+    H -- yes --> I["PER-FRAME LOOP<br/>(see chart 2-4)"]
+    F --> I
+    C --> I
+    I --> J["collect row: pert, pred, errors,<br/>decoded lat/lon, pos_err"]
+    J --> K{more frames?}
+    K -- yes --> I
+    K -- no --> L["Aggregate → summary.json, per_frame.csv,<br/>error_cdf.png, trajectory.png"]
