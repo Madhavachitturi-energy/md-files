@@ -1,0 +1,10 @@
+flowchart TD
+    A["sample_tile(date, ref_lat, ref_lon,<br/>ref_yaw, ref_size_m, ref_gsd)<br/>maps.py:99"] --> B["FootprintSpec:<br/>center=ref_lat/lon, W=H=ref_size_m,<br/>true_yaw_rad=ref_yaw, gsd=ref_gsd"]
+    B --> C["shape_px = round(size / gsd)<br/>= tile_px^2 — geometry.py:67"]
+    B --> D["sample_body_frame_footprint(tif, spec)<br/>geotiff.py:35"]
+    D --> E["aeqd_crs(ref_lat, ref_lon)<br/>azimuthal-equidistant, metres, origin=center"]
+    D --> F["body_frame_dst_affine(spec)<br/>rotated by yaw so image-top = drone-forward<br/>geometry.py:89"]
+    E --> G["rasterio.open(tif) — src CRS (EPSG:4326)"]
+    F --> G
+    G --> H["for band in R,G,B:<br/>reproject src -> AEQD dst grid<br/>(bilinear)"]
+    H --> I["transpose -> ref_rgb (px, px, 3) uint8<br/>no-coverage pixels = 0"]

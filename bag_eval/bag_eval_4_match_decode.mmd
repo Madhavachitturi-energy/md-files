@@ -1,0 +1,13 @@
+flowchart TD
+    A["ortho_rgb (query)  +  ref_rgb (reference)"] --> B["_to_tensor: ImageNet-normalise,<br/>-> (1,3,P,P) on device — bag_eval.py:77"]
+    B --> C["TwoTowerModel.forward(q, r) — model.py:68"]
+    C --> D["shared DINOv3 + LoRA backbone<br/>encodes BOTH tiles -> grid + pooled"]
+    D --> E["corr_head(grid_q, grid_r)"]
+    E --> F["offset_frac (2)  -  dyaw_deg (1)  -  logvar (2)"]
+
+    F --> G["pred_dx/dy_m = offset_frac - ref_size_m<br/>sigma_m = exp(0.5-logvar) - ref_size_m"]
+    G --> H["body-frame error vs perturbation:<br/>err = (pred_dx,dy) - (pert_dx,dy)<br/>err_yaw = abs(pred_dyaw - pert_dyaw)"]
+    G --> I["decode world pose:<br/>pred_q_yaw = ref_yaw - pred_dyaw<br/>invert body_offset -> pred_lat/lon<br/>bag_eval.py:174"]
+    I --> J["pos_err_m = haversine(pred, gt MAVROS)<br/>geo.py:64"]
+    H --> K["row -> CSV / CDF / trajectory"]
+    J --> K

@@ -1,0 +1,27 @@
+flowchart TD
+    P["frame fr + interpolated pose p<br/>(lat, lon, alt, roll, pitch, yaw_enu)"] --> Q{alt_agl_m > 0?}
+    Q -- no --> SKIP1["skip: no_alt"]
+    Q -- yes --> SIZE["tile_m = footprint_fill - footprint_h(alt)<br/>gsd = tile_m / tile_px — bag_eval.py:137"]
+
+    SIZE --> CAM["CAMERA / QUERY BRANCH"]
+    SIZE --> SAT["TIF / REFERENCE BRANCH"]
+
+    subgraph CAMB["Query: drone image -> ortho tile"]
+        CAM --> O1["orthorectify(fr.image_rgb,...)<br/>roll/pitch = 0 if assume_nadir<br/>ortho.py:86"]
+        O1 --> O2{coverage_pct >= 70?}
+        O2 -- no --> SKIP2["skip: coverage"]
+        O2 -- yes --> O3["ortho_rgb (tile_px^2, 3)<br/>body-frame, GSD-matched"]
+    end
+
+    subgraph SATB["Reference: tif -> satellite tile"]
+        SAT --> S1["q_yaw = compass yaw(declination)<br/>ref_size_m = tile_m - ref_factor"]
+        S1 --> S2{"tile_fits(map_date, lat, lon,<br/>ref_size + 2-offset)? maps.py:87"}
+        S2 -- no --> SKIP3["skip: map_fit"]
+        S2 -- yes --> S3["perturb: dx,dy in +/-offset_m, dyaw in +/-yaw_deg<br/>_fixed_perturb() bag_eval.py:64"]
+        S3 --> S4["ref_lat,ref_lon = body_offset_to_latlon(<br/>lat,lon,q_yaw,dx,dy) — geo.py:26<br/>ref_yaw = q_yaw + dyaw"]
+        S4 --> S5["ref_rgb = reg.sample_tile(...)<br/>(see chart 3)"]
+    end
+
+    O3 --> FWD["_forward(model, ortho_rgb, ref_rgb)<br/>(see chart 4)"]
+    S5 --> FWD
+    FWD --> DEC["Decode + error (see chart 4)"]
